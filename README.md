@@ -2,8 +2,12 @@
 
 API de portfolio y envío de órdenes al mercado. .NET 10 + PostgreSQL.
 
-📄 **[`docs/reference.html`](docs/reference.html)** — documento de referencia con diagramas del
-flujo de ejecución, el cálculo del portfolio y el control de concurrencia. Abrilo en el navegador.
+📘 **[`docs/DOCUMENTACION.md`](docs/DOCUMENTACION.md)** — documentación técnica y funcional
+completa: modelo de dominio, referencia de endpoints, control de concurrencia y las decisiones
+técnicas que soportan cada funcionalidad.
+
+📄 **[`docs/reference.html`](docs/reference.html)** — el mismo material en versión visual, con
+diagramas del flujo de ejecución y de la carrera de concurrencia. Abrilo en el navegador.
 
 ---
 
