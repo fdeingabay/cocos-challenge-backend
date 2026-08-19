@@ -1,0 +1,13 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/Cocos.Api/Cocos.Api.csproj" />
+    <Project Path="src/Cocos.Application/Cocos.Application.csproj" />
+    <Project Path="src/Cocos.Domain/Cocos.Domain.csproj" />
+    <Project Path="src/Cocos.Infrastructure/Cocos.Infrastructure.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/Cocos.ArchitectureTests/Cocos.ArchitectureTests.csproj" />
+    <Project Path="tests/Cocos.IntegrationTests/Cocos.IntegrationTests.csproj" />
+    <Project Path="tests/Cocos.UnitTests/Cocos.UnitTests.csproj" />
+  </Folder>
+</Solution>

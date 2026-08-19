@@ -1,0 +1,53 @@
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: cocos-db
+    environment:
+      POSTGRES_USER: cocos
+      POSTGRES_PASSWORD: cocos
+      POSTGRES_DB: cocos
+    ports:
+      - "5432:5432"
+    # Los scripts de ./db corren en orden alfabetico al crear el volumen:
+    #   01-database.sql       -> el provisto por el challenge, sin modificar
+    #   02-V2__challenge.sql  -> nuestros cambios, cada uno justificado en el archivo
+    volumes:
+      - ./db:/docker-entrypoint-initdb.d:ro
+      - cocos-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U cocos -d cocos"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  api:
+    build:
+      context: .
+      target: runtime
+    container_name: cocos-api
+    ports:
+      - "8080:8080"
+    environment:
+      ConnectionStrings__Cocos: "Host=db;Port=5432;Database=cocos;Username=cocos;Password=cocos"
+    # Espera a que la base este realmente lista, no solo a que el contenedor arranque.
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # Perfil aparte para que 'docker compose up' no lo levante:
+  #   docker compose --profile test run --rm tests
+  tests:
+    profiles: ["test"]
+    build:
+      context: .
+      target: test
+    environment:
+      # Habilita el fallback de la suite: usa este servidor en vez de TestContainers.
+      COCOS_TEST_DB: "Host=db;Port=5432;Database=postgres;Username=cocos;Password=cocos"
+    depends_on:
+      db:
+        condition: service_healthy
+
+volumes:
+  cocos-pgdata:

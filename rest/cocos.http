@@ -1,0 +1,73 @@
+# Con docker compose (recomendado). Para "dotnet run" local, usar el puerto 5080.
+@host = http://localhost:8080
+@userId = 1
+@pamp = 47
+@metr = 54
+
+### Portfolio del usuario
+# Esperado con el seed limpio:
+#   accountingCash 753000 | reservedCash 125500 | availableCash 627500
+#   posiciones: PAMP 40 | METR 500 | BMA -10 (inconsistencia del seed, ver README)
+GET {{host}}/api/users/{{userId}}/portfolio
+
+### Buscar por ticker
+GET {{host}}/api/instruments?search=PAMP
+
+### Buscar por nombre (case-insensitive)
+GET {{host}}/api/instruments?search=pampa
+
+### Listado paginado
+GET {{host}}/api/instruments?page=1&pageSize=5
+
+### MARKET BUY por cantidad -> FILLED contra el ultimo close (925,85)
+POST {{host}}/api/orders
+Content-Type: application/json
+Idempotency-Key: demo-market-buy-1
+
+{ "userId": 1, "instrumentId": 47, "side": "BUY", "type": "MARKET", "size": 10 }
+
+### MARKET BUY por monto -> 100000 / 925,85 = 108 acciones, sobran $8,20
+POST {{host}}/api/orders
+Content-Type: application/json
+
+{ "userId": 1, "instrumentId": 47, "side": "BUY", "type": "MARKET", "amount": 100000 }
+
+### MARKET BUY sin fondos -> 201 con status REJECTED, y la orden queda persistida
+POST {{host}}/api/orders
+Content-Type: application/json
+
+{ "userId": 1, "instrumentId": 47, "side": "BUY", "type": "MARKET", "size": 1000000 }
+
+### LIMIT BUY -> NEW. El disponible baja aunque no se ejecuto nada: eso es la reserva.
+POST {{host}}/api/orders
+Content-Type: application/json
+
+{ "userId": 1, "instrumentId": 47, "side": "BUY", "type": "LIMIT", "size": 10, "price": 900 }
+
+### LIMIT SELL -> NEW. Reserva nominales, no pesos.
+POST {{host}}/api/orders
+Content-Type: application/json
+
+{ "userId": 1, "instrumentId": 54, "side": "SELL", "type": "LIMIT", "size": 100, "price": 240 }
+
+### Monto que no alcanza ni para una accion -> 400 (no se persiste)
+POST {{host}}/api/orders
+Content-Type: application/json
+
+{ "userId": 1, "instrumentId": 47, "side": "BUY", "type": "MARKET", "amount": 10 }
+
+### Reintento con la misma Idempotency-Key -> devuelve la orden original, no crea otra
+POST {{host}}/api/orders
+Content-Type: application/json
+Idempotency-Key: demo-market-buy-1
+
+{ "userId": 1, "instrumentId": 47, "side": "BUY", "type": "MARKET", "size": 10 }
+
+### Ordenes vivas del usuario (para saber cual cancelar)
+GET {{host}}/api/users/{{userId}}/orders?status=NEW
+
+### Cancelar (reemplazar el id por uno en estado NEW) -> libera la reserva
+POST {{host}}/api/orders/5/cancel?userId=1
+
+### Cancelar de nuevo la misma orden -> 409, la reserva no se libera dos veces
+POST {{host}}/api/orders/5/cancel?userId=1

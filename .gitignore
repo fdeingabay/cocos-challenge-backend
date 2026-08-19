@@ -1,0 +1,19 @@
+# .NET
+bin/
+obj/
+*.user
+*.suo
+artifacts/
+[Dd]ebug/
+[Rr]elease/
+TestResults/
+*.trx
+*.coverage
+*.nupkg
+
+# IDE
+.vs/
+.vscode/
+.idea/
+*.swp
+.DS_Store
