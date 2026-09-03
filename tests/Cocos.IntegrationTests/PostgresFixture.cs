@@ -1,6 +1,8 @@
 using System.Collections.Concurrent;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using Npgsql;
 using Testcontainers.PostgreSql;
 
@@ -156,7 +158,7 @@ public sealed class PostgresFixture : IAsyncLifetime
         => new NpgsqlConnectionStringBuilder(_serverConnectionString) { Database = database }.ConnectionString;
 
     /// <summary>
-    /// Connection string para las operaciones de administracion, SIN pooling: una conexion
+    /// Connection string para las operaciones de administracion, SIN pooling: una conexión
     /// ociosa retenida por el pool bloquea tanto el DROP como el CREATE ... TEMPLATE.
     /// </summary>
     private string AdminConnectionStringFor(string database)
@@ -176,10 +178,24 @@ public sealed class PostgresFixture : IAsyncLifetime
     }
 }
 
-public sealed class CocosApiFactory(string connectionString) : WebApplicationFactory<Program>
+public sealed class CocosApiFactory(
+    string connectionString,
+    TimeProvider? timeProvider = null,
+    ILoggerProvider? loggerProvider = null) : WebApplicationFactory<Program>
 {
     protected override void ConfigureWebHost(IWebHostBuilder builder)
-        => builder.UseSetting("ConnectionStrings:Cocos", connectionString);
+    {
+        builder.UseSetting("ConnectionStrings:Cocos", connectionString);
+
+        // Ambos overrides se registran DESPUES de los de Program.cs, asi que ganan al resolver.
+        // Sin reemplazar el reloj, el PeriodicTimer del job espera cinco minutos reales y su
+        // cuerpo no se ejecuta en ningun test.
+        if (timeProvider is not null)
+            builder.ConfigureServices(services => services.AddSingleton(timeProvider));
+
+        if (loggerProvider is not null)
+            builder.ConfigureLogging(logging => logging.AddProvider(loggerProvider));
+    }
 }
 
 /// <summary>Base de cada clase de test: su propia base de datos y su propio host.</summary>

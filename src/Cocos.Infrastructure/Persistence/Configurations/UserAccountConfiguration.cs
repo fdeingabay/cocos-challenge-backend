@@ -10,6 +10,8 @@ public sealed class UserAccountConfiguration : IEntityTypeConfiguration<UserAcco
     {
         builder.ToTable("user_accounts");
         builder.HasKey(a => a.UserId);
+        // ValueGeneratedNever: esta tabla no genera el userid, ya existe en las órdenes. Solo
+        // lo replica para tener una fila por usuario que bloquear.
         builder.Property(a => a.UserId).HasColumnName("userid").ValueGeneratedNever();
     }
 }

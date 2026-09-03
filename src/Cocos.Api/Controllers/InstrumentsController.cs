@@ -12,8 +12,8 @@ namespace Cocos.Api.Controllers;
 public sealed class InstrumentsController(IMessageBus bus) : ControllerBase
 {
     /// <summary>
-    /// Busca activos por ticker o por nombre. Sin termino de busqueda devuelve el listado
-    /// completo paginado.
+    /// Busca activos por ticker o por nombre. Sin término de búsqueda devuelve el listado
+    /// completo, siempre paginado. La búsqueda ignora acentos y mayúsculas.
     /// </summary>
     [HttpGet]
     [ProducesResponseType<PagedResult<InstrumentResponse>>(StatusCodes.Status200OK)]

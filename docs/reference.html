@@ -187,7 +187,7 @@ a{color:var(--accent)}
 <section id="api">
   <p class="eyebrow">API</p>
   <h2>Endpoints: lo pedido contra lo desarrollado</h2>
-  <p class="sub">El challenge pide 3 endpoints. Desarrollamos 5 más un job. Los agregados son
+  <p class="sub">El challenge pide 3 endpoints. Desarrollamos 6 más un job. Los agregados son
   consecuencia de reglas que el enunciado enuncia pero deja sin implementar.</p>
 
   <div class="scroll"><table>
@@ -197,11 +197,14 @@ a{color:var(--accent)}
           <td>Separar <strong>valor total</strong> de <strong>disponible</strong></td>
           <td>El disponible descuenta reservas. Son dos números distintos.</td></tr>
       <tr><td><code>GET /api/instruments?search=</code></td><td class="yes">Sí</td>
-          <td>Paginación + índice GIN trigram</td>
-          <td>Sin índice, <code>ILIKE '%x%'</code> es full scan.</td></tr>
+          <td>Paginación + índice GIN trigram sobre <code>f_unaccent()</code></td>
+          <td>Sin índice, <code>ILIKE '%x%'</code> es full scan. Ignora acentos: <code>zorraquin</code> encuentra <code>Zorraquín</code>.</td></tr>
       <tr><td><code>POST /api/orders</code></td><td class="yes">Sí</td>
           <td><code>Idempotency-Key</code>, orden por monto, reservas</td>
           <td>El monto lo pide el enunciado; lo demás es nuestro.</td></tr>
+      <tr><td><code>GET /api/orders/{id}?userId=</code></td><td class="no">No</td>
+          <td>Lectura de una orden puntual</td>
+          <td>Es el recurso al que apunta el <code>Location</code> del 201. Sin él, esa cabecera promete una dirección que no existe.</td></tr>
       <tr><td><code>POST /api/orders/{id}/cancel</code></td><td class="warnc">Implícito</td>
           <td>Endpoint completo</td>
           <td>Dice «solo se cancelan las NEW» pero nunca define el endpoint. Sin él la regla es inverificable.</td></tr>
@@ -498,23 +501,27 @@ tenencia(user, instrumento)  <b>&gt;= 0</b></div>
 <section id="esquema">
   <p class="eyebrow">Migración</p>
   <h2>Cambios de esquema</h2>
-  <p class="sub">Cada uno justificado en <code>db/V2__challenge.sql</code> y en el README.</p>
+  <p class="sub">Cada uno justificado en <code>db/02-V2__challenge.sql</code> y en el README.</p>
 
   <div class="scroll"><table>
     <thead><tr><th>Objeto</th><th>Cambio</th><th>Por qué</th></tr></thead>
     <tbody>
       <tr><td><code>orders</code></td><td><code>+ filledsize INT NOT NULL DEFAULT 0</code></td>
           <td>Separar solicitado de ejecutado. Sin esto los fills parciales son imposibles de modelar.</td></tr>
-      <tr><td><code>orders</code></td><td><code>+ expiresat TIMESTAMPTZ NULL</code></td>
-          <td>Vigencia diaria de las LIMIT.</td></tr>
+      <tr><td><code>orders</code></td><td><code>+ expiresat TIMESTAMP NULL</code></td>
+          <td>Vigencia diaria de las LIMIT. Sin zona, como todas las fechas del esquema provisto.</td></tr>
+      <tr><td><code>orders</code></td><td><code>+ cancelledat TIMESTAMP NULL</code></td>
+          <td>La respuesta del cancel informa <em>cuándo</em>. Sin la columna, ese instante no queda en ningún lado y la API devuelve una fecha que nadie puede reproducir.</td></tr>
       <tr><td><code>orders</code></td><td><code>+ idempotencykey TEXT</code> + índice único</td>
           <td>Anti-duplicado. Sin tabla extra: la orden es el registro.</td></tr>
       <tr><td><code>orders</code></td><td>Estados <code>PARTIALLY_FILLED</code>, <code>EXPIRED</code></td>
           <td>Consecuencia de los dos primeros.</td></tr>
       <tr><td><strong><code>user_accounts</code></strong></td><td><strong>Tabla nueva</strong>, 1 fila por usuario</td>
           <td><strong>Punto de serialización para el <code>FOR UPDATE</code>.</strong></td></tr>
-      <tr><td>Índices</td><td><code>orders(userid,status)</code>, <code>orders(userid,instrumentid,status)</code>, <code>orders(status,expiresat)</code>, <code>marketdata(instrumentid,"date" DESC)</code>, GIN trigram en <code>instruments</code></td>
+      <tr><td>Índices</td><td><code>orders(userid,status)</code>, <code>orders(userid,instrumentid,status)</code>, <code>orders(status,expiresat)</code>, <code>marketdata(instrumentid,"date" DESC)</code>, GIN trigram sobre <code>f_unaccent(ticker)</code> y <code>f_unaccent(name)</code></td>
           <td>Hoy no existe ninguno.</td></tr>
+      <tr><td>Extensiones</td><td><code>pg_trgm</code>, <code>unaccent</code> + función <code>f_unaccent()</code></td>
+          <td>Búsqueda sin acentos. <code>unaccent()</code> no es <code>IMMUTABLE</code> y por eso no se puede indexar: hace falta envolverla en una función propia que sí lo sea, y crear el índice sobre esa misma expresión.</td></tr>
       <tr><td>Constraints</td><td><code>NOT NULL</code> + <code>CHECK</code> en status / side / type / sizes</td>
           <td>Hoy todo es <code>VARCHAR</code> nullable.</td></tr>
     </tbody>

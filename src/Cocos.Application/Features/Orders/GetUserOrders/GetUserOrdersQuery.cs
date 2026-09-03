@@ -2,6 +2,7 @@ using Cocos.Application.Common;
 
 namespace Cocos.Application.Features.Orders.GetUserOrders;
 
+/// <param name="Status">Literal de la base ("FILLED", "NEW", ...). Ausente significa sin filtro.</param>
 public sealed record GetUserOrdersQuery(
     int UserId,
     string? Status = null,

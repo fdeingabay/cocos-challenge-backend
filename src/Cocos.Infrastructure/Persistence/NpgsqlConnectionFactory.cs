@@ -5,9 +5,12 @@ using Npgsql;
 namespace Cocos.Infrastructure.Persistence;
 
 /// <summary>
-/// Publica a proposito: Wolverine genera el codigo de invocacion de los handlers en tiempo
-/// de compilacion y necesita poder referenciar el tipo concreto. Si es internal cae en
-/// service location, que esta deshabilitado, y el handler falla en runtime.
+/// Abre conexiones para el lado de LECTURA del sistema: las consultas Dapper que proyectan a
+/// records. Ninguna escritura pasa por aca.
+///
+/// Pública a propósito: Wolverine genera en compilacion el código que invoca a los handlers y
+/// necesita referenciar el tipo concreto. Si fuera internal caería en service location, que
+/// esta deshabilitado, y el handler fallaría en runtime.
 /// </summary>
 public sealed class NpgsqlConnectionFactory(NpgsqlDataSource dataSource) : IDbConnectionFactory
 {

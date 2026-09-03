@@ -5,9 +5,9 @@ using Microsoft.EntityFrameworkCore;
 namespace Cocos.Infrastructure.Persistence;
 
 /// <summary>
-/// DbContext = Unit of Work. No se agrega un Repository ni un UoW propio encima:
-/// serian una capa de indireccion sobre una abstraccion que ya existe, y ademas
-/// esconderian justamente lo que aca importa (transacciones, locks explicitos).
+/// El DbContext ya es la unidad de trabajo. No hay Repository ni UoW propio encima: serian una
+/// indirección sobre una abstraccion que ya existe, y esconderian justo lo que aca importa, que
+/// son las transacciones y los locks explícitos.
 /// </summary>
 public sealed class CocosDbContext(DbContextOptions<CocosDbContext> options)
     : DbContext(options), ICocosDbContext

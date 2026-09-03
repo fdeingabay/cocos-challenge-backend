@@ -98,6 +98,16 @@ tabla**, y de ahí se derivan tanto las decisiones de consistencia como las de r
 `PARTIALLY_FILLED` y `EXPIRED` no están en el enunciado; se agregaron junto con la columna
 `filledsize` y la vigencia diaria. La justificación está en [3.3](#33-modelo-de-datos).
 
+**`PARTIALLY_FILLED` está soportado de punta a punta, pero esta API no lo produce.** Toda la
+cadena lo contempla —el remanente reserva, la cancelación libera sólo el remanente, el
+vencimiento hace lo mismo, el portfolio informa lo ejecutado y el PPP lo costea— y
+`PartialFillTests` fija las tres transiciones. Lo que no existe es una operación que deje una
+orden a medio ejecutar: eso requiere un motor de matching que cruce órdenes contra el libro, y el
+enunciado establece que **no hace falta simular el mercado**. El estado es entonces una capacidad
+del modelo, no un camino muerto: el día que exista matching, la aritmética ya está escrita y
+verificada. Y `filledsize`, que es lo que lo hace posible, se paga igual por otra razón —separar
+lo solicitado de lo ejecutado— sin la cual la reserva de una orden viva no se puede calcular.
+
 ## 2.3 El concepto de reserva
 
 Es el núcleo funcional del sistema y lo que separa una implementación correcta de una que
@@ -219,7 +229,7 @@ Búsqueda de activos por ticker o por nombre, paginada.
 
 | Query param | Default | Notas |
 |---|---|---|
-| `search` | — | Coincidencia parcial, case-insensitive, sobre ticker **y** nombre. Sin valor devuelve todo. |
+| `search` | — | Coincidencia parcial sobre ticker **y** nombre, ignorando mayúsculas **y acentos**: `zorraquin` encuentra `Garovaglio Y Zorraquín`. Sin valor (o en blanco) devuelve todo. El término se busca **literal**: `%` y `_` no son comodines. |
 | `page` | `1` | |
 | `pageSize` | `20` | Tope duro de `100` |
 
@@ -275,7 +285,15 @@ quedó persistida como exige el enunciado; el rechazo es un **resultado de negoc
 de protocolo. El cliente distingue mirando `status` y `rejectionReason`. Un `400` afirmaría que
 el cliente mandó algo mal, y no es el caso: mandó una orden válida que el mercado rechazó.
 
+El `201` incluye la cabecera `Location`, que apunta al recurso recién creado:
+`/api/orders/{id}?userId={userId}`.
+
 **Respuesta `200`** — reintento con una `Idempotency-Key` ya usada: devuelve la orden original.
+
+El código distingue los dos desenlaces exitosos y no es cosmético: un `201` le afirma al cliente
+que **acaba de crear** una orden. Si el reintento contestara `201`, cualquier cliente que cuente
+altas contaría dos veces la misma compra —justo lo que la clave existe para impedir—. El handler
+devuelve un `SubmitOrderOutcome` que dice cuál de los dos ocurrió; el controller lo traduce.
 
 **Errores**
 
@@ -289,6 +307,39 @@ el cliente mandó algo mal, y no es el caso: mandó una orden válida que el mer
 
 Sobre `order.size_zero`: no es falta de fondos sino una orden que **no llega a formarse**.
 Persistirla ensuciaría el libro con filas de tamaño cero que no aportan información.
+
+---
+
+### `GET /api/orders/{orderId}?userId={userId}`
+
+Una orden puntual. Es el recurso al que apunta el `Location` del `201` del alta: sin este
+endpoint, esa cabecera prometería una dirección que no lleva a ningún lado.
+
+| Query param | Obligatorio | Notas |
+|---|---|---|
+| `userId` | **Sí** | Sin él el binding lo resuelve como `0` y la respuesta sería un `404` que dice que la orden no existe cuando en realidad existe. Falta un parámetro: eso es `400`. |
+
+**Respuesta `200`**
+
+```json
+{
+  "id": 12, "userId": 1, "instrumentId": 47, "ticker": "PAMP",
+  "side": "BUY", "type": "LIMIT", "status": "CANCELLED",
+  "size": 10, "filledSize": 0, "price": 900.00, "notional": 9000.00,
+  "dateTime": "2026-08-19T01:40:12.3Z", "expiresAt": "2026-08-19T23:59:59.9Z",
+  "cancelledAt": "2026-08-19T01:42:00Z"
+}
+```
+
+Es la única lectura que informa `cancelledAt`: el listado devuelve un resumen y el alta todavía
+no tiene nada que informar.
+
+**Errores**
+
+| Código | `code` | Cuándo |
+|---|---|---|
+| `400` | — | Falta `userId`. |
+| `404` | `order.not_found` | No existe **para ese usuario**. Una orden ajena responde igual que una inexistente: contestar distinto le confirmaría que esa orden existe para otro. |
 
 ---
 
@@ -308,6 +359,7 @@ Cancela una orden viva y libera su reserva.
 |---|---|---|
 | `404` | `order.not_found` | No existe **para ese usuario**. Un usuario no puede saber si la orden existe para otro. |
 | `409` | `order.not_cancellable` | Ya está `FILLED`, `CANCELLED`, `EXPIRED` o `REJECTED`. El mensaje informa el estado actual. |
+| `409` | `order.no_longer_open` | Dejó de estar viva **entre la lectura y el registro**: la venció el job o la canceló otra sesión. Es la carrera real, distinta del caso anterior. |
 
 ---
 
@@ -317,11 +369,25 @@ Listado paginado de órdenes. Filtrar por `status=NEW` para saber cuáles se pue
 
 | Query param | Default |
 |---|---|
-| `status` | — (todas) |
+| `status` | — (todas). Cualquier capitalización: `new` y `NEW` son lo mismo. |
 | `page` | `1` |
 | `pageSize` | `20`, tope `100` |
 
 Ordenado por fecha descendente.
+
+**Errores**
+
+| Código | `code` | Cuándo |
+|---|---|---|
+| `400` | `order.unknown_status` | El `status` pedido no existe. El mensaje enumera los válidos. |
+| `404` | `user.not_found` | No existe el usuario. |
+
+Los dos son deliberados y valen la pena explicarlos: **"no hay órdenes en ese estado" y "ese
+estado no existe" son respuestas distintas**, igual que "el usuario no tiene órdenes" y "el
+usuario no existe". Devolver una lista vacía en los cuatro casos hace que un error del cliente
+—un typo en el query param, un id equivocado— llegue como un resultado legítimo. El filtro se
+convierte en concepto de dominio (`OrderStatusFilter`) antes de tocar la base, así que lo que
+llega al `WHERE` es siempre un literal que existe.
 
 ## 2.6 Idempotencia
 
@@ -355,7 +421,7 @@ reservado      =   SELL vivo     (size − filledSize)
 disponible     = cantidad − reservado
 
 valor mercado  = cantidad × close
-ppp            = Σ(BUY ejecutado: filledSize × price) / Σ(BUY ejecutado: filledSize)
+ppp            = costo de la tenencia ACTUAL / cantidad en cartera
 rendimiento %  = (close − ppp) / ppp × 100
 retorno día %  = (close − previousClose) / previousClose × 100
 ```
@@ -376,8 +442,24 @@ Venta  10 @ $250  →  quedan 10, ¿con qué costo?
 | **PPP** (promedio ponderado) | 10 × $150 = $1.500 | **+100%** |
 | FIFO | 10 × $200 = $2.000 | **+50%** |
 
-Se eligió **PPP**: es el estándar para retail, no requiere rastrear lotes individuales y se
-resuelve con una sola query agregada, mientras que FIFO necesita recorrido ordenado.
+Se eligió **PPP**: es el estándar para retail y no requiere rastrear lotes individuales.
+
+**Lo que sí requiere es un recorrido ordenado**, y esto costó un bug. La primera versión lo
+calculaba con una sola agregación —`Σ(compras) / Σ(cantidades compradas)`— que *no es* el PPP:
+coincide con él sólo mientras no haya ventas de por medio. La regla del PPP es que una venta
+reduce el costo **en la misma proporción** que la tenencia, dejando el promedio intacto; eso es
+multiplicativo y no tiene forma cerrada. En cuanto una posición se cerraba y se volvía a abrir,
+el promedio de por vida seguía arrastrando compras de una tenencia que ya no existía:
+
+```
+PAMP: 40 acciones, PPP 930   →  vender las 40  →  comprar 1 a 925,85
+   promedio de todas las compras: 929,92   ← arrastra 50 compras de una posición cerrada
+   PPP de la tenencia actual:     925,85   ← lo único que se pagó por la única acción
+```
+
+Hoy `PositionsSql` camina los movimientos ejecutados en orden con un CTE recursivo. Es la parte
+cara de la consulta y se paga a conciencia: informar un costo que nadie pagó es peor que un
+`WITH RECURSIVE`.
 
 *Limitación conocida:* si una posición se cierra y se reabre, el PPP mezcla ambos ciclos.
 Resolverlo correctamente implica resetear el costo al llegar a cero, lo que rompe la agregación
@@ -433,8 +515,13 @@ en cuatro carpetas. Acá cada slice es autocontenido:
 Features/Orders/SubmitOrder/
     SubmitOrderCommand.cs      command + response (records)
     SubmitOrderValidator.cs    validación de forma
-    SubmitOrderHandler.cs      orquestación + SQL
+    SubmitOrderHandler.cs      resolución del caso de uso
+    IAccountLedger.cs          el lock de cuenta y sus lecturas (contrato)
+    IInstrumentReader.cs       instrumento y último precio (contrato)
 ```
+
+El SQL de estos contratos vive en `Cocos.Infrastructure/Orders/`, del lado de la capa que
+conoce la base.
 
 Todo lo que hace falta para entender "enviar una orden" está en una carpeta. La regla de
 dependencias de Clean se conserva; lo que cambia es el eje de agrupación.
@@ -451,8 +538,8 @@ Controller  ──InvokeAsync──►  Handler  ──►  Result<T>
                                 └─ Domain   (reglas y cálculos)
 ```
 
-**Wolverine** es el mediador in-process. Los handlers son clases estáticas con un método
-`Handle` y las dependencias se inyectan **por parámetro**, no por constructor:
+**Wolverine** es el mediador in-process. Casi todos los handlers son clases estáticas con un
+método `Handle` y las dependencias se inyectan **por parámetro**, no por constructor:
 
 ```csharp
 public static async Task<Result<PortfolioResponse>> Handle(
@@ -460,6 +547,13 @@ public static async Task<Result<PortfolioResponse>> Handle(
     IDbConnectionFactory connectionFactory,
     CancellationToken cancellationToken)
 ```
+
+`SubmitOrderHandler` es la excepción: es una clase de instancia con inyección por constructor,
+porque tiene un método privado (`ResolvePriceAsync`) que necesita las mismas dependencias, y con
+inyección por parámetro habría que arrastrarlas hasta él. No es por tener colaboradores propios:
+`CancelOrderHandler` también los tiene —el libro de órdenes— y sigue siendo estático. Wolverine
+soporta las dos formas; lo que exige en ambas es que el tipo, el constructor y el método sean
+públicos, y eso lo fija `HandlerConventionTests`.
 
 Sin estado de instancia, sin ceremonia de constructor, y trivialmente testeable llamando al
 método directamente. Wolverine genera el código de invocación **en tiempo de compilación** en
@@ -477,9 +571,11 @@ en el propio archivo.
 |---|---|
 | `orders.filledsize` | **Fills parciales.** La tabla original no distingue cantidad *solicitada* de *ejecutada*: solo tiene `size`. Sin esa separación una orden ejecutada a medias calcula mal la tenencia, porque no hay forma de saber cuánto se movió realmente. |
 | `orders.expiresat` + `EXPIRED` | **Vigencia diaria.** Sin vencimiento una orden `NEW` reserva fondos para siempre y el usuario nunca los recupera. |
+| `orders.cancelledat` | **Auditoría de la cancelación.** La respuesta informa *cuándo* se canceló; sin la columna ese instante no quedaba registrado en ningún lado y nadie podía reproducirlo. `datetime` es el alta de la orden, y el estado `CANCELLED` dice *qué* pasó pero no *cuándo*. Un `CHECK` enuncia que solo una orden cancelada puede tenerla. |
 | `orders.idempotencykey` + índice único parcial | **Protección contra reintentos.** Ver [3.5](#35-concurrencia-y-consistencia). |
 | Estado `PARTIALLY_FILLED` | Consecuencia directa de `filledsize`. |
 | **Tabla `user_accounts`** | **Punto de serialización de la cuenta.** Es la pieza central del control de concurrencia; se explica en detalle en [3.5](#35-concurrencia-y-consistencia). |
+| Extensión `unaccent` + función `f_unaccent()` | **Búsqueda insensible a acentos.** `unaccent()` no es `IMMUTABLE`, así que no se puede indexar directamente: la V2 la envuelve en una función propia que sí lo es. El índice trigram se crea sobre **esa misma expresión**, y la consulta la repite literalmente — si dejan de coincidir, el planner descarta el índice y cada búsqueda vuelve a ser un full scan. |
 | 5 índices | Rendimiento. La base provista no tenía ninguno más allá de las PK. Ver [3.10](#310-rendimiento). |
 | `NOT NULL` + `CHECK` | Última línea de defensa. Todo era `VARCHAR` nullable, sin ninguna restricción. |
 
@@ -595,18 +691,106 @@ entre usuarios, el eje "instrumento" directamente no aparece.
 **Reservas en el cálculo del disponible.** Resuelto en [2.3](#23-el-concepto-de-reserva). Es una
 regla de negocio, no de concurrencia, pero sostiene la misma invariante.
 
+**El invariante, escrito una sola vez.** Hay dos lados que leen la misma cuenta y tienen que
+coincidir siempre: el portfolio **informa** el disponible y el envío de órdenes **decide** contra
+él. Estaban escritos por separado —las mismas expresiones `CASE`, palabra por palabra, en dos
+capas distintas—, que es la clase de duplicación que no avisa al divergir: la API informaría un
+número y el sistema aceptaría otro. Hoy los cuatro fragmentos viven en `LedgerSql` y los dos
+lados los componen:
+
+| Fragmento | Lo usa el portfolio como | Lo usa el envío como |
+|---|---|---|
+| `AccountingCash` | `accountingCash` | primer término del disponible |
+| `ReservedCash` | `reservedCash` | segundo término (el que se olvida) |
+| `ExecutedQuantity` | `quantity` de cada posición | primer término de los nominales libres |
+| `ReservedQuantity` | `quantity − availableQuantity` | segundo término |
+
+Los estados vivos no son un literal del SQL: llegan como `@OpenStatuses` desde `DbValues`, igual
+que en la cancelación y el vencimiento. Y la coincidencia entre ambos lados está fijada por dos
+tests que gastan **exactamente** el disponible que la API informa —y después un peso más—: si las
+dos lecturas divergen, fallan.
+
+**Lo ejecutado, en cambio, no filtra por estado.** `filledsize` *es* lo ejecutado, por definición:
+una `NEW` o una `REJECTED` lo tienen en cero, y ningún estado terminal deshace una ejecución.
+Cancelar el remanente de una orden a medio ejecutar libera la reserva y nada más; las acciones ya
+compradas siguen compradas.
+
+Esto fue un bug real, encontrado por una auditoría independiente contra el enunciado. Los cuatro
+fragmentos condicionaban lo ejecutado a un `ExecutedStatuses` = `{FILLED, PARTIALLY_FILLED}`, así
+que al pasar a `CANCELLED` o `EXPIRED` el `filledsize` dejaba de contar en las cuatro cuentas a la
+vez:
+
+```
+antes de cancelar   contable 96.400 | reservado 5.400 | GGAL 4 acciones a 900
+despues de cancelar contable 100.000 | reservado 0     | sin posiciones
+```
+
+$3.600 pagados por 4 acciones reales, devueltos; las acciones, borradas. Y por vencimiento era
+peor: lo disparaba el job, no el usuario. La corrección quitó el filtro —el invariante perdió un
+concepto en vez de ganar dos, y `DbValues.ExecutedStatuses` desapareció— y un `CHECK` de la V2
+(`ck_orders_filled_solo_si_ejecuto`) volvió estructural lo que la sostiene: una orden `NEW` o
+`REJECTED` no puede tener `filledsize > 0`. `PartialFillTests` lo fija en las tres transiciones.
+
 **UPDATE condicional en la cancelación.** La condición de estado viaja en el `WHERE`, no se evalúa
 antes en memoria:
 
 ```sql
-UPDATE orders SET status = 'CANCELLED'
-WHERE id = @OrderId AND userid = @UserId AND status IN ('NEW','PARTIALLY_FILLED');
+UPDATE orders SET status = @NewStatus, cancelledat = @CancelledAt
+WHERE id = @OrderId AND userid = @UserId AND status = ANY(@OpenStatuses);
 ```
+
+El *cuándo* se escribe en el mismo statement que el *qué*: la cancelación es un solo hecho, y
+guardar su estado sin su instante deja a la API informando una fecha que no existe en la base.
 
 Se verifica que haya afectado exactamente una fila. Dos cancelaciones simultáneas —o una
 cancelación compitiendo con el job de expiración— hacen que solo una afecte filas; la otra ve `0`
 y sabe que perdió la carrera. **Sin esto la reserva se podría liberar dos veces.** Es concurrencia
 optimista aplicada exactamente donde importa, sin ningún lock adicional.
+
+Cuáles son los estados vivos **no es un literal del SQL**: llega por parámetro desde
+`DbValues.OpenStatuses`. La regla de negocio se manda a la base en vez de estar escrita dos veces,
+una en C# y otra en SQL, con un test que fija que ambas coincidan.
+
+**El caso de uso, partido en dos mitades.** La *decisión* vive en el dominio —`Order.Cancel()` no
+muta la orden: produce un `OrderCancellation`, el hecho ya decidido y todavía no registrado— y la
+*garantía* vive en la sentencia de arriba, que lo registra sólo si la orden sigue viva. Por eso
+`CancelOrderHandler` pregunta dos veces lo mismo, y las dos hacen falta:
+
+| Pregunta | Para qué | ¿Puede quedar obsoleta? |
+|---|---|---|
+| `order.CanBeCancelled` | **Explicar** el 409 con el estado real | Sí, entre la lectura y la escritura |
+| `status = ANY(@OpenStatuses)` | **Garantizar** que la reserva no se libere dos veces | No: se evalúa al escribir |
+
+El handler no ve SQL, ni `rowsAffected`, ni un nombre de columna: sólo el libro de órdenes
+(`IOrderBook`) y las reglas del dominio. Cancelar además **no toma el lock de cuenta** —a
+diferencia del envío—: su conflicto vive en una fila, no en una suma, y una fila la defiende
+PostgreSQL solo.
+
+**El vencimiento: el mismo mecanismo, aplicado a un conjunto.** El barrido usa un `UPDATE` masivo
+con la misma forma condicional:
+
+```sql
+UPDATE orders SET status = @NewStatus
+WHERE status = ANY(@OpenStatuses) AND expiresat IS NOT NULL AND expiresat <= @AsOf;
+```
+
+Es **idempotente por construcción**: el filtro por estado hace que una segunda corrida afecte `0`
+filas, porque las que ya vencieron dejaron de estar vivas. Por eso el job puede correr en N
+instancias sin leader election ni claim —la primera gana y las demás no hacen nada— y por eso
+`OrderExpirationService` puede reintentar en el próximo tick tras un fallo, sin efectos duplicados.
+
+La diferencia con la cancelación es de naturaleza, y vale la pena marcarla: acá **no hay una
+entidad que cargar**. Vencer no es una decisión *por orden* sino un **criterio evaluado a un
+instante** —`OrderExpiry`—, y el `UPDATE` masivo es su expresión en conjunto. Cargar las órdenes
+una por una para llamarles un método sería un N+1 disfrazado de pureza. La regla por entidad
+existe igual, en `Order.HasExpired(now)`, y un test de integración fija que el barrido venza
+exactamente las órdenes para las que esa regla es `true`.
+
+> **Sobre el seed:** las dos órdenes `NEW` provistas son de julio de 2023 y la migración V2 les
+> asignó el cierre de su jornada. El primer barrido en una base recién creada las vence y libera
+> su reserva —50×710 + 60×1500 = **$125.500**, justo la diferencia entre el cash contable y el
+> disponible del usuario 1—. No es un artefacto: es lo que pasaría en producción, y es el motivo
+> por el que esa columna se backfilleó. Hay un test que lo fija.
 
 **Idempotencia.** Índice único parcial `(userid, idempotencykey) WHERE idempotencykey IS NOT NULL`.
 
@@ -634,7 +818,7 @@ una garantía.
 | Lock por cuenta con `FOR UPDATE` | Que el disponible nunca quede negativo bajo concurrencia | `SERIALIZABLE`: correcto pero con abortos y retry en todo el pipeline |
 | Tabla `user_accounts` dedicada | Darle a la base una fila que bloquear | Bloquear alguna fila de `orders`: no hay ninguna que represente "la cuenta" |
 | Reservas en el disponible | `CASH_OUT` y compras concurrentes contra órdenes vivas | Contar solo ejecutadas: permite comprometer fondos inexistentes |
-| `UPDATE` condicional | Cancelación segura ante carreras | Leer, decidir, escribir: ventana entre el chequeo y la acción |
+| `UPDATE` condicional | Cancelación segura ante carreras | Read-modify-write: decidir en memoria y escribir **sin** condición deja abierta la ventana entre el chequeo y la acción |
 | Índice único de idempotencia | Que un reintento no duplique la compra | Tabla `idempotency_records` aparte: obliga a serializar y versionar la respuesta |
 | EF Core en escritura | Transacción, tracking y `INSERT` de la orden | Solo Dapper: manejo manual de transacciones |
 | Dapper en lectura | Portfolio en una query, proyectando a records | EF con `Include`: materializa entidades completas y arrastra N+1 |
@@ -673,18 +857,32 @@ un error del servidor, y registrarlo como tal ensucia la señal de errores reale
 `CancellationToken.None`.
 
 ```csharp
-// A partir de aca NO se propaga el CancellationToken del request. Que el cliente
-// corte la conexion no puede dejar una orden aplicada a medias: es el caso de
-// "partial completion is dangerous". El trabajo pendiente se termina siempre.
+// Sin CancellationToken a proposito: el trabajo pendiente se termina siempre, aunque
+// el cliente ya haya cortado.
 await db.SaveChangesAsync(CancellationToken.None);
 await transaction.CommitAsync(CancellationToken.None);
 ```
 
+Esto vive en `AccountLock.CommitAsync()`, y la interfaz lo refuerza: `IAccountLock.CommitAsync()`
+**no recibe `CancellationToken`**. La decisión deja de depender de que alguien lea un comentario
+—la firma directamente no admite el token.
+
 Si el usuario cierra la app justo cuando se está confirmando su compra, la compra se confirma.
 Lo contrario dejaría el sistema en un estado que nadie puede reconstruir.
 
-El job de expiración sigue la misma lógica: respeta la cancelación al abrir la conexión —todavía
-no escribió nada— pero ejecuta el `UPDATE` con `None`.
+La cancelación de una orden también: `IOrderBook.ApplyAsync()` **no recibe `CancellationToken`**,
+igual que `CommitAsync()`. Con la decisión ya tomada, que el cliente corte la conexión no puede
+dejar la reserva retenida.
+
+El barrido de vencimiento es el tercer caso, y el más literal: `IOpenOrders.ApplyAsync()` tampoco
+lo recibe, y `ExpireOrdersHandler` directamente **no lo toma como parámetro**. Sin conexión que
+abrir ni escritura cancelable, no queda nada a lo que pasárselo, y la firma dice por sí sola que
+ese caso de uso no se interrumpe a la mitad. El apagado del host lo maneja un nivel más arriba
+`OrderExpirationService`, que corta en el `WaitForNextTickAsync` y captura
+`OperationCanceledException` de forma específica.
+
+Queda una sola regla en todo el codebase, ya sin excepciones: **la escritura que consume una
+decisión de negocio no toma el token del request**, y en los tres casos la firma lo impone.
 
 ## 3.9 Seguridad
 
@@ -692,7 +890,8 @@ Sin autenticación por indicación del enunciado. Lo que sí se aplica:
 
 | Riesgo | Mitigación |
 |---|---|
-| Inyección SQL | Todo parámetro viaja como tal, nunca concatenado. Los comodines de `ILIKE` se arman del lado del código para que el valor siga siendo dato y no sintaxis. |
+| Inyección SQL | Todo parámetro viaja como tal, nunca concatenado. |
+| Comodines de `ILIKE` | El término se escapa antes de armar el patrón (`LikePattern`). **Parametrizar no alcanza:** evita la inyección, pero dentro de un `LIKE` el valor sigue siendo *sintaxis*. Sin escapar, buscar `%` devolvía los 66 instrumentos y buscar `S_A` devolvía 39 —el `_` matcheaba el punto de "S.A."—. El `ESCAPE '\'` se declara explícito aunque sea el default de PostgreSQL, y el índice trigram se sigue usando. |
 | Consumo de recursos | `pageSize` con tope duro de 100. Sin él, un cliente pide toda la tabla en un request. |
 | Desbordes | `price` acotado por validación antes de llegar a la columna `numeric(10,2)`, que si no fallaría con un error opaco en vez de un `400` claro. |
 | Índice inflado | `Idempotency-Key` limitada a 128 caracteres. Además el btree de PostgreSQL tiene un límite por entrada que una clave gigante haría estallar en runtime. |
@@ -737,13 +936,13 @@ respuesta necesita. Nunca se materializa una entidad completa para devolver tres
 
 ## 3.11 Estrategia de testing
 
-59 tests en tres niveles, con criterios distintos.
+171 tests en tres niveles, con criterios distintos.
 
 | Suite | Cantidad | Qué verifica |
 |---|---|---|
-| `Cocos.UnitTests` | 23 | Aritmética monetaria (`floor`, PPP, rendimientos) y máquina de estados. Con `FakeTimeProvider`. |
-| `Cocos.ArchitectureTests` | 7 | Reglas de capas, contratos inmutables, prohibición de `DateTime.Now`. |
-| `Cocos.IntegrationTests` | 29 | La API completa contra PostgreSQL real. |
+| `Cocos.UnitTests` | 87 | Aritmética monetaria (`floor`, PPP, rendimientos), máquina de estados, cobertura de la cuenta y normalización de las entradas de texto. Con `FakeTimeProvider`. |
+| `Cocos.ArchitectureTests` | 10 | Reglas de capas, contratos inmutables, convenciones de handlers, prohibición de `DateTime.Now`. |
+| `Cocos.IntegrationTests` | 74 | La API completa contra PostgreSQL real. |
 
 **Por qué PostgreSQL real y no el provider in-memory de EF.** In-memory **no implementa locking de
 filas**, que es exactamente el mecanismo bajo prueba. Un test de concurrencia contra in-memory pasa

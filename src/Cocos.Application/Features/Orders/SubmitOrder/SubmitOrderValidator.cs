@@ -4,9 +4,9 @@ using FluentValidation;
 namespace Cocos.Application.Features.Orders.SubmitOrder;
 
 /// <summary>
-/// Valida la FORMA del pedido. Todo lo que necesita conocer el precio o el saldo
-/// (cantidad resultante, fondos suficientes) se resuelve en el handler, dentro de la
-/// transaccion: fuera de ella el dato ya podria estar desactualizado.
+/// Valida la FORMA del pedido. Todo lo que necesita el precio o el saldo -- la cantidad que sale
+/// de un monto, si los fondos alcanzan -- se resuelve en el handler y dentro del lock: fuera de
+/// el, el dato ya puede estar viejo.
 /// </summary>
 public sealed class SubmitOrderValidator : AbstractValidator<SubmitOrderCommand>
 {
@@ -15,7 +15,7 @@ public sealed class SubmitOrderValidator : AbstractValidator<SubmitOrderCommand>
         RuleFor(x => x.UserId).GreaterThan(0);
         RuleFor(x => x.InstrumentId).GreaterThan(0);
 
-        // CASH_IN y CASH_OUT son transferencias, no ordenes de mercado: no se envian por aca.
+        // CASH_IN y CASH_OUT son movimientos de fondos, no órdenes al mercado: no entran por aca.
         RuleFor(x => x.Side)
             .Must(side => side is OrderSide.Buy or OrderSide.Sell)
             .WithMessage("El side debe ser BUY o SELL.");
@@ -37,8 +37,8 @@ public sealed class SubmitOrderValidator : AbstractValidator<SubmitOrderCommand>
             .When(x => x.Type == OrderType.Limit)
             .WithMessage("Una orden LIMIT requiere un precio mayor a cero.");
 
-        // Cota superior defensiva: la columna es numeric(10,2), un valor mayor
-        // reventaria en la base con un error opaco en vez de un 400 claro (OWASP API4).
+        // Cota superior defensiva: la columna es numeric(10,2) y un valor mayor falla en la base
+        // con un error opaco en vez de dar un 400 claro (OWASP API4).
         RuleFor(x => x.Price)
             .LessThan(100_000_000m).When(x => x.Price.HasValue)
             .WithMessage("El precio excede el maximo admitido.");

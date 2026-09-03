@@ -3,19 +3,32 @@ using Dapper;
 
 namespace Cocos.Application.Features.Instruments.SearchInstruments;
 
+/// <summary>
+/// Búsqueda de instrumentos por ticker o nombre. Sin término devuelve el listado completo,
+/// siempre paginado.
+/// </summary>
 public static class SearchInstrumentsHandler
 {
-    // El patron viaja SIEMPRE como parametro, nunca concatenado en el SQL: concatenar la
-    // entrada del usuario es inyeccion directa (OWASP A03). Los comodines se agregan del
-    // lado del codigo, no del SQL, para que el valor siga siendo un dato y no sintaxis.
+    // El patrón viaja SIEMPRE por parámetro, nunca concatenado: concatenar la entrada del
+    // usuario es inyeccion directa (OWASP A03). Parametrizar tampoco alcanza para que el termino
+    // sea un dato -- dentro de un ILIKE sigue siendo sintaxis -- asi que va escapado por
+    // LikePattern: sin eso, buscar "S_A" devuelve los 39 instrumentos que dicen "S.A.".
     //
-    // ILIKE '%texto%' no puede aprovechar un btree; por eso la migracion crea un indice
-    // GIN trigram sobre ticker y name. Sin el, cada busqueda es un full scan de la tabla.
+    // El ESCAPE '\' es el default de Postgres y se declara igual, para que la sentencia diga cual
+    // es el caracter de escape en vez de dejarlo implicito.
+    //
+    // ILIKE '%texto%' no puede aprovechar un btree, asi que la migracion crea un indice GIN
+    // trigram. Sin el, cada búsqueda es un full scan.
+    //
+    // f_unaccent va en los DOS lados: nadie escribe las tildes en un buscador, asi que
+    // "zorraquin" tiene que encontrar "Zorraquin S.A.", y aplicarlo tambien sobre el patrón deja
+    // funcionando al termino que si las trae. El indice esta creado sobre esta misma expresion:
+    // si la consulta y el indice dejan de coincidir literalmente, el planner lo descarta.
     private const string WhereClause =
         """
         WHERE @Pattern IS NULL
-           OR ticker ILIKE @Pattern
-           OR name   ILIKE @Pattern
+           OR f_unaccent(ticker) ILIKE f_unaccent(@Pattern) ESCAPE '\'
+           OR f_unaccent(name)   ILIKE f_unaccent(@Pattern) ESCAPE '\'
         """;
 
     public static async Task<Result<PagedResult<InstrumentResponse>>> Handle(
@@ -29,7 +42,7 @@ public static class SearchInstrumentsHandler
         var term = string.IsNullOrWhiteSpace(query.Search) ? null : query.Search.Trim();
         var parameters = new
         {
-            Pattern = term is null ? null : $"%{term}%",
+            Pattern = term is null ? null : LikePattern.Contains(term),
             Take = pageSize,
             Skip = (page - 1) * pageSize
         };

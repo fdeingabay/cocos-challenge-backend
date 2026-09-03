@@ -1,8 +1,12 @@
 namespace Cocos.Application.Common;
 
 /// <summary>
-/// Result Pattern: el flujo de negocio no usa excepciones. Una excepcion en este codebase
-/// significa un fallo genuinamente inesperado, no una regla de negocio que no se cumplio.
+/// Result Pattern: el flujo de negocio no usa excepciones. Una excepcion en este codebase es un
+/// fallo genuinamente inesperado, no una regla de negocio que no se cumplio.
+///
+/// El constructor si lanza <see cref="InvalidOperationException"/> ante un Result mal formado
+/// -- exitoso con error, o fallido sin el -- porque eso no es un desenlace del negocio sino un
+/// error de programacion.
 /// </summary>
 public class Result
 {
@@ -35,6 +39,10 @@ public class Result<TValue> : Result
     protected internal Result(TValue? value, bool isSuccess, Error error) : base(isSuccess, error)
         => _value = value;
 
+    /// <summary>
+    /// El valor del resultado exitoso. Si el Result es fallido lanza
+    /// <see cref="InvalidOperationException"/>: hay que preguntar por IsSuccess antes.
+    /// </summary>
     public TValue Value => IsSuccess
         ? _value!
         : throw new InvalidOperationException("No se puede leer el Value de un Result fallido.");

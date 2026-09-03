@@ -5,7 +5,7 @@ using FluentAssertions;
 namespace Cocos.IntegrationTests;
 
 /// <summary>
-/// Instrumentos y numeros vienen del seed provisto (usuario 1, emiliano@test.com):
+/// Instrumentos y números vienen del seed provisto (usuario 1, emiliano@test.com):
 /// disponible para operar $627.500, PAMP(47) close 925,85, METR(54) 500 acciones.
 /// </summary>
 [Collection(DatabaseCollection.Name)]
@@ -26,7 +26,7 @@ public sealed class SubmitOrderTests(PostgresFixture fixture) : IntegrationTestB
         var order = await Read(response);
         order.Status.Should().Be("FILLED");
         order.FilledSize.Should().Be(10);
-        order.Price.Should().Be(925.85m, "una MARKET se ejecuta contra el ultimo close");
+        order.Price.Should().Be(925.85m, "una MARKET se ejecuta contra el último close");
         order.ExpiresAt.Should().BeNull();
     }
 
@@ -151,6 +151,47 @@ public sealed class SubmitOrderTests(PostgresFixture fixture) : IntegrationTestB
         response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
     }
 
+    // ---------- el efecto sobre las posiciones ----------
+    // "Cuando una orden es ejecutada, se tiene que actualizar el listado de posiciones del
+    // usuario" es un requisito del enunciado, y vive en la costura ENTRE los dos endpoints:
+    // que la orden quede FILLED y que el portfolio calcule bien son dos cosas distintas de
+    // que enviarla mueva la tenencia.
+
+    [Fact]
+    public async Task Ejecutar_una_orden_actualiza_la_posicion_que_ya_existia()
+    {
+        (await Posicion("PAMP")).Quantity.Should().Be(40, "lo que trae el seed");
+
+        await Submit(new { userId = UserId, instrumentId = Pamp, side = "BUY", type = "MARKET", size = 10 });
+
+        var comprada = await Posicion("PAMP");
+        comprada.Quantity.Should().Be(50);
+        comprada.MarketValue.Should().Be(50 * 925.85m, "el valor de mercado sigue a la cantidad");
+
+        await Submit(new { userId = UserId, instrumentId = Pamp, side = "SELL", type = "MARKET", size = 5 });
+
+        (await Posicion("PAMP")).Quantity.Should().Be(45, "vender tambien mueve la tenencia");
+    }
+
+    [Fact]
+    public async Task Ejecutar_una_compra_agrega_al_listado_una_posicion_que_no_existia()
+    {
+        const int dyca = 1;
+
+        (await Portfolio()).Positions.Should().NotContain(p => p.Ticker == "DYCA",
+            "el usuario 1 no opero nunca este instrumento");
+
+        await Submit(new { userId = UserId, instrumentId = dyca, side = "BUY", type = "MARKET", size = 3 });
+
+        var nueva = await Posicion("DYCA");
+        nueva.Quantity.Should().Be(3);
+        nueva.MarketValue.Should().Be(3 * 259.00m);
+        nueva.AverageCost.Should().Be(259.00m, "se pago el último close");
+    }
+
+    private async Task<PositionResult> Posicion(string ticker)
+        => (await Portfolio()).Positions.Single(p => p.Ticker == ticker);
+
     // ---------- idempotencia ----------
 
     [Fact]
@@ -167,6 +208,40 @@ public sealed class SubmitOrderTests(PostgresFixture fixture) : IntegrationTestB
         var todas = await Client.GetFromJsonAsync<Paged<OrderSummary>>(
             $"/api/users/{UserId}/orders?pageSize=100");
         todas!.Items.Count(o => o.Id == primera.Id).Should().Be(1);
+    }
+
+    [Fact]
+    public async Task El_reintento_contesta_200_y_no_201_porque_no_creo_nada()
+    {
+        var payload = new { userId = UserId, instrumentId = Pamp, side = "BUY", type = "MARKET", size = 5 };
+        const string key = "reintento-del-cliente-2";
+
+        var alta = await Submit(payload, key);
+        var reintento = await Submit(payload, key);
+
+        alta.StatusCode.Should().Be(HttpStatusCode.Created);
+        reintento.StatusCode.Should().Be(HttpStatusCode.OK,
+            "un 201 le diria al cliente que acaba de crear una orden, y contar altas contaria dos veces la misma compra");
+
+        reintento.Headers.Location.Should().BeNull("no hay recurso nuevo al que apuntar");
+        (await Read(reintento)).Id.Should().Be((await Read(alta)).Id);
+    }
+
+    [Fact]
+    public async Task El_Location_del_201_apunta_a_la_orden_creada()
+    {
+        var respuesta = await Submit(new { userId = UserId, instrumentId = Pamp, side = "BUY", type = "MARKET", size = 1 });
+
+        var location = respuesta.Headers.Location;
+        location.Should().NotBeNull("un 201 sin Location no le dice al cliente donde quedo el recurso");
+
+        // Seguirla tiene que devolver la orden, no un 404 ni un 405. Antes apuntaba a
+        // "/api/orders?id=N", que no existe: la cabecera prometia un recurso inexistente.
+        var seguida = await Client.GetAsync(location);
+        seguida.StatusCode.Should().Be(HttpStatusCode.OK);
+
+        var orden = (await seguida.Content.ReadFromJsonAsync<OrderDetail>())!;
+        orden.Id.Should().Be((await Read(respuesta)).Id);
     }
 
     // ---------- helpers ----------

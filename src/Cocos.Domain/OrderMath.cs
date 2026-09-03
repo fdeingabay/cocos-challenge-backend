@@ -1,14 +1,16 @@
 namespace Cocos.Domain;
 
 /// <summary>
-/// Aritmetica monetaria del dominio. Todo en decimal: con double, floor(monto/precio)
-/// devuelve una accion de mas o de menos por error de representacion, y eso es plata real.
+/// Aritmetica monetaria del dominio. Todo en decimal: con double, floor(monto/precio) da una
+/// accion de mas o de menos por error de representacion, y eso es plata real.
 /// </summary>
 public static class OrderMath
 {
     /// <summary>
-    /// Cantidad maxima de acciones que entran en un monto. No se admiten fracciones,
-    /// asi que se trunca hacia abajo y el remanente de pesos queda sin usar.
+    /// Cuantas acciones entran en un monto. No hay fracciones: trunca hacia abajo y el remanente
+    /// de pesos queda sin usar. Con un precio no positivo lanza
+    /// <see cref="ArgumentOutOfRangeException"/> -- valuar contra ese precio es un fallo, no una
+    /// orden invalida.
     /// </summary>
     public static int SizeFromAmount(decimal amount, decimal price)
     {
@@ -19,18 +21,23 @@ public static class OrderMath
     }
 
     /// <summary>
-    /// Precio promedio ponderado de compra (PPP). Es el metodo de costeo elegido para el
-    /// rendimiento: a diferencia de FIFO no necesita rastrear lotes individuales, asi que
-    /// se resuelve con una sola query agregada. La eleccion cambia el numero informado y
-    /// esta documentada en el README.
+    /// Precio promedio ponderado de compra (PPP) de la tenencia ACTUAL. Es el metodo de costeo
+    /// elegido: cambia el rendimiento informado, y la eleccion esta justificada en el README.
+    ///
+    /// Recibe el costo de lo que hoy esta en cartera, no la suma de todas las compras de la
+    /// historia. Bajo PPP una venta baja el costo en la misma proporcion que la tenencia -- el
+    /// promedio no se mueve -- y al cerrar la posicion el costo vuelve a cero. Promediar toda la
+    /// historia coincide con eso solo mientras no haya ventas; despues arrastra compras de una
+    /// tenencia que ya no existe. El recorrido ordenado lo hace el CTE recursivo de la consulta
+    /// de portfolio.
     /// </summary>
-    public static decimal? AverageCost(decimal totalBuyCost, int totalBuyQuantity)
-        => totalBuyQuantity <= 0 ? null : totalBuyCost / totalBuyQuantity;
+    public static decimal? AverageCost(decimal costBasis, int quantity)
+        => quantity <= 0 ? null : costBasis / quantity;
 
     /// <summary>
-    /// Rendimiento total de la posicion contra su costo promedio. La cantidad se cancela
-    /// en la division, de ahi que baste con comparar precio actual contra PPP.
-    /// Es una metrica DEL USUARIO, distinta del retorno diario del instrumento.
+    /// Rendimiento de la posicion contra su PPP. La cantidad se cancela en la division, por eso
+    /// alcanza con comparar precio actual contra PPP. Es una metrica DEL USUARIO, distinta de la
+    /// variacion diaria del instrumento.
     /// </summary>
     public static decimal? TotalReturnPercent(decimal? close, decimal? averageCost)
         => close is null || averageCost is null or 0m
@@ -38,8 +45,8 @@ public static class OrderMath
             : (close.Value - averageCost.Value) / averageCost.Value * 100m;
 
     /// <summary>
-    /// Retorno diario del instrumento. Es igual para todos los usuarios: no depende de a
-    /// que precio compro cada uno. Se informa como campo separado del rendimiento.
+    /// Variacion diaria del instrumento. Es igual para todos los usuarios: no depende de a que
+    /// precio compro cada uno, y por eso se informa aparte del rendimiento.
     /// </summary>
     public static decimal? DailyReturnPercent(decimal? close, decimal? previousClose)
         => close is null || previousClose is null or 0m
@@ -47,7 +54,7 @@ public static class OrderMath
             : (close.Value - previousClose.Value) / previousClose.Value * 100m;
 
     /// <summary>
-    /// Vencimiento de una orden LIMIT: cierre de la jornada en que se envio (DAY order).
+    /// Vencimiento de una orden LIMIT: el cierre de la jornada en que se envio (DAY order).
     /// Recibe el "ahora" ya resuelto por TimeProvider, nunca lee el reloj por su cuenta.
     /// </summary>
     public static DateTime EndOfDay(DateTime timestamp)

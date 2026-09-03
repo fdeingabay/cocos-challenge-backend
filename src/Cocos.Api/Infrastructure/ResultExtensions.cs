@@ -6,9 +6,10 @@ namespace Cocos.Api.Infrastructure;
 public static class ResultExtensions
 {
     /// <summary>
-    /// Traduce un Error de negocio al status HTTP correspondiente.
-    /// Los rechazos de orden por fondos/tenencia insuficiente NO pasan por aca:
-    /// son un resultado exitoso que devuelve 201 con status REJECTED.
+    /// Traduce un Error de negocio al status HTTP que le corresponde: 400, 404 o 409.
+    ///
+    /// Los rechazos por fondos o tenencia insuficiente no pasan por aca: son un resultado
+    /// exitoso, y devuelven 201 con status REJECTED.
     /// </summary>
     public static ActionResult ToProblem(this Error error)
     {

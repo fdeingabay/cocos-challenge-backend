@@ -12,8 +12,8 @@ public sealed record PagedResult<T>(
 }
 
 /// <summary>
-/// Tope duro de pageSize: sin el, un cliente puede pedir una pagina de un millon de filas
-/// y convertir un endpoint de busqueda en un vector de denegacion de servicio (OWASP API4).
+/// Tope duro de pageSize: sin el, un cliente pide una pagina de un millón de filas y convierte
+/// un endpoint de búsqueda en un vector de denegacion de servicio (OWASP API4).
 /// </summary>
 public static class Paging
 {

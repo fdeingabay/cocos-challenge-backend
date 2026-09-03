@@ -1,9 +1,11 @@
 using Cocos.Api.Infrastructure;
 using Cocos.Application.Common;
 using Cocos.Application.Features.Orders.CancelOrder;
+using Cocos.Application.Features.Orders.GetOrder;
 using Cocos.Application.Features.Orders.SubmitOrder;
 using Cocos.Domain.Enums;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.Mvc.ModelBinding;
 using Wolverine;
 
 namespace Cocos.Api.Controllers;
@@ -17,35 +19,33 @@ public sealed class OrdersController(IMessageBus bus) : ControllerBase
     /// Envia una orden de compra o venta al mercado.
     /// </summary>
     /// <remarks>
-    /// Las MARKET se ejecutan al instante contra el ultimo precio y quedan en FILLED.
-    /// Las LIMIT quedan en NEW reservando fondos (compra) o nominales (venta) hasta
-    /// ejecutarse, cancelarse o vencer al cierre de la jornada.
+    /// Las MARKET se ejecutan al instante contra el último precio y quedan en FILLED. Las LIMIT
+    /// quedan en NEW reservando pesos (compra) o nominales (venta) hasta ejecutarse, cancelarse
+    /// o vencer al cierre de la jornada.
     ///
-    /// Una orden sin fondos o sin tenencia suficiente NO es un error: se persiste en estado
-    /// REJECTED y se devuelve 201, porque la solicitud se proceso correctamente.
+    /// Una orden sin fondos o sin tenencia suficiente no es un error: se persiste en estado
+    /// REJECTED y se devuelve 201, porque la solicitud se proceso bien.
     /// </remarks>
     /// <param name="request">Datos de la orden. Enviar 'size' o 'amount', nunca los dos.</param>
     /// <param name="idempotencyKey">
-    /// Opcional pero recomendado. Protege contra el reintento del cliente: sin esta clave,
-    /// una perdida de senal o un doble toque crean DOS ordenes y el usuario compra dos veces.
+    /// Opcional pero recomendado. Sin ella, una perdida de senal o un doble toque crean DOS
+    /// órdenes y el usuario compra dos veces.
     ///
     /// Que enviar: un valor opaco y aleatorio, por ejemplo un UUID v4. No derivarlo del
-    /// contenido de la orden (un hash de instrumento + cantidad + precio) porque comprar dos
-    /// veces lo mismo es una operacion legitima, y un hash de contenido se comeria la segunda
-    /// en silencio. La clave identifica el INTENTO, no el contenido.
+    /// contenido de la orden: comprar dos veces lo mismo es una operación legitima, y un hash
+    /// del contenido se comeria la segunda en silencio. La clave identifica el INTENTO.
     ///
-    /// Cuando generarla: una sola vez, en el momento en que el usuario confirma la operacion,
-    /// y reusar exactamente ese valor en cada reintento de esa misma intencion. Si el cliente
-    /// genera una clave nueva por cada request HTTP, la proteccion no existe. Conviene ademas
-    /// persistirla junto a la orden pendiente: si la app se cierra durante el timeout y al
-    /// reabrir manda una clave nueva, se duplica igual.
+    /// Cuando generarla: una sola vez, cuando el usuario confirma la operación, y reusar ese
+    /// mismo valor en cada reintento de esa intención. Una clave nueva por request HTTP no
+    /// protege de nada. Conviene persistirla junto a la orden pendiente: si la app se cierra
+    /// durante el timeout y al reabrir manda otra clave, se duplica igual.
     ///
-    /// Respuesta ante un reintento: 200 con la orden original, en lugar del 201 del alta.
+    /// Un reintento responde 200 con la orden original, en lugar del 201 del alta.
     ///
-    /// Alcance: la clave es unica por usuario, asi que dos usuarios pueden usar el mismo valor
-    /// sin interferir. Limite de 128 caracteres.
+    /// La clave es única por usuario, asi que dos usuarios pueden usar el mismo valor sin
+    /// interferir. Limite de 128 caracteres.
     /// </param>
-    /// <param name="cancellationToken">Token de cancelacion de la solicitud.</param>
+    /// <param name="cancellationToken">Token de cancelación de la solicitud.</param>
     [HttpPost]
     [ProducesResponseType<SubmitOrderResponse>(StatusCodes.Status201Created)]
     [ProducesResponseType<SubmitOrderResponse>(StatusCodes.Status200OK)]
@@ -60,24 +60,62 @@ public sealed class OrdersController(IMessageBus bus) : ControllerBase
             request.UserId, request.InstrumentId, request.Side, request.Type,
             request.Size, request.Amount, request.Price, idempotencyKey);
 
-        var result = await bus.InvokeAsync<Result<SubmitOrderResponse>>(command, cancellationToken);
+        var result = await bus.InvokeAsync<Result<SubmitOrderOutcome>>(command, cancellationToken);
 
         if (result.IsFailure)
             return result.Error.ToProblem();
 
-        return CreatedAtAction(nameof(Submit), new { id = result.Value.Id }, result.Value);
+        // Un reintento no creo nada, asi que no puede contestar 201: el cliente que mire el
+        // código para decidir si registrar un alta contaria dos veces la misma compra. El
+        // handler distingue los dos desenlaces; aca solo se traducen a HTTP.
+        var outcome = result.Value;
+
+        if (outcome.IsReplay)
+            return Ok(outcome.Order);
+
+        return CreatedAtAction(
+            nameof(GetById),
+            new { orderId = outcome.Order.Id, userId = outcome.Order.UserId },
+            outcome.Order);
     }
 
     /// <summary>
-    /// Cancela una orden viva. Solo aplica a ordenes en estado NEW o PARTIALLY_FILLED.
+    /// Una orden puntual del usuario. Es el recurso al que apunta el Location del alta.
+    /// </summary>
+    /// <remarks>
+    /// Una orden de otro usuario devuelve 404 y no 403: contestar distinto le confirmaria que
+    /// esa orden existe para alguien mas.
+    /// </remarks>
+    [HttpGet("{orderId:int}", Name = nameof(GetById))]
+    [ProducesResponseType<GetOrderResponse>(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<ActionResult<GetOrderResponse>> GetById(
+        int orderId,
+        [FromQuery, BindRequired] int userId,
+        CancellationToken cancellationToken)
+    {
+        var result = await bus.InvokeAsync<Result<GetOrderResponse>>(
+            new GetOrderQuery(orderId, userId), cancellationToken);
+
+        return result.IsSuccess ? Ok(result.Value) : result.Error.ToProblem();
+    }
+
+    /// <summary>
+    /// Cancela una orden viva. Solo aplica a órdenes en estado NEW o PARTIALLY_FILLED.
+    /// Al dejar de estar viva, la orden deja de reservar y el disponible se recupera solo.
     /// </summary>
     [HttpPost("{orderId:int}/cancel")]
     [ProducesResponseType<CancelOrderResponse>(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
     [ProducesResponseType(StatusCodes.Status409Conflict)]
     public async Task<ActionResult<CancelOrderResponse>> Cancel(
         int orderId,
-        [FromQuery] int userId,
+        // BindRequired y no un int a secas: sin el, un userId ausente se bindea a 0 y el caso
+        // de uso contesta "no existe la orden N para el usuario 0" -- un 404 que miente, porque
+        // la orden si existe. Falta un parámetro, y eso es 400.
+        [FromQuery, BindRequired] int userId,
         CancellationToken cancellationToken)
     {
         var result = await bus.InvokeAsync<Result<CancelOrderResponse>>(
@@ -87,12 +125,12 @@ public sealed class OrdersController(IMessageBus bus) : ControllerBase
     }
 }
 
-/// <param name="UserId">Usuario que envia la orden.</param>
+/// <param name="UserId">Usuario que envía la orden.</param>
 /// <param name="InstrumentId">Instrumento a operar.</param>
 /// <param name="Side">BUY o SELL.</param>
 /// <param name="Type">MARKET o LIMIT.</param>
 /// <param name="Size">Cantidad exacta de acciones. Excluyente con 'amount'.</param>
-/// <param name="Amount">Monto en pesos a invertir; se calcula la cantidad maxima de acciones enteras. Excluyente con 'size'.</param>
+/// <param name="Amount">Monto en pesos a invertir; se traduce a la cantidad máxima de acciones enteras. Excluyente con 'size'.</param>
 /// <param name="Price">Precio limite. Obligatorio para LIMIT, ignorado para MARKET.</param>
 public sealed record SubmitOrderRequest(
     int UserId,

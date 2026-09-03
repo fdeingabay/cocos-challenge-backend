@@ -10,14 +10,14 @@ public sealed class MarketData
     public decimal? Low { get; private set; }
     public decimal? Open { get; private set; }
 
-    /// <summary>Ultimo precio del activo. Es el que usan las ordenes MARKET.</summary>
+    /// <summary>Ultimo precio del activo. Es el que valua a las órdenes MARKET.</summary>
     public decimal? Close { get; private set; }
 
     public decimal? PreviousClose { get; private set; }
 
     /// <summary>
-    /// La tabla provista define esta columna como DATE (el enunciado la lista como
-    /// "datetime", pero el DDL real dice otra cosa). Hay dos dias cargados por instrumento.
+    /// El DDL provisto declara esta columna como DATE, aunque el enunciado la liste como
+    /// datetime. Hay dos dias cargados por instrumento.
     /// </summary>
     public DateOnly Date { get; private set; }
 }

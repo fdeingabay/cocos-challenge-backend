@@ -3,9 +3,9 @@ namespace Cocos.Application.Features.Portfolio.GetPortfolio;
 public sealed record GetPortfolioQuery(int UserId);
 
 /// <param name="TotalAccountValue">Cash contable mas el valor de mercado de todas las posiciones.</param>
-/// <param name="AvailableCash">Lo que el usuario realmente puede usar: contable menos lo reservado por ordenes vivas.</param>
+/// <param name="AvailableCash">Poder de compra: el contable menos lo reservado por las órdenes de compra vivas.</param>
 /// <param name="AccountingCash">Saldo puramente contable, sin descontar compromisos.</param>
-/// <param name="ReservedCash">Comprometido por ordenes LIMIT de compra que siguen vivas.</param>
+/// <param name="ReservedCash">Lo que retienen las órdenes LIMIT de compra que siguen vivas.</param>
 public sealed record PortfolioResponse(
     int UserId,
     decimal TotalAccountValue,
@@ -14,8 +14,8 @@ public sealed record PortfolioResponse(
     decimal ReservedCash,
     IReadOnlyList<PositionResponse> Positions);
 
-/// <param name="Quantity">Acciones en cartera, calculadas solo con ordenes ejecutadas.</param>
-/// <param name="AvailableQuantity">Acciones libres: las de cartera menos las reservadas por ordenes de venta vivas.</param>
+/// <param name="Quantity">Acciones en cartera: solo cuenta lo efectivamente ejecutado.</param>
+/// <param name="AvailableQuantity">Acciones libres: las de cartera menos las reservadas por órdenes de venta vivas.</param>
 /// <param name="AverageCost">Precio promedio ponderado de compra (PPP).</param>
 /// <param name="TotalReturnPercent">Rendimiento de la posicion contra su PPP. Es una metrica del usuario.</param>
 /// <param name="DailyReturnPercent">Variacion del instrumento en el dia. Es igual para todos los usuarios.</param>

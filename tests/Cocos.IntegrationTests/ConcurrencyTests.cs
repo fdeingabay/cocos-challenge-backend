@@ -39,7 +39,7 @@ public sealed class ConcurrencyTests(PostgresFixture fixture) : IntegrationTestB
         }));
 
         respuestas.Count(o => o.Status == "NEW").Should().Be(esperadasAceptadas,
-            "solo pueden aceptarse tantas ordenes como entren en el disponible");
+            "solo pueden aceptarse tantas órdenes como entren en el disponible");
 
         respuestas.Count(o => o.Status == "REJECTED").Should().Be(intentos - esperadasAceptadas);
 

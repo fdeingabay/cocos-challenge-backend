@@ -3,9 +3,8 @@ using Cocos.Domain.Enums;
 namespace Cocos.Domain;
 
 /// <summary>
-/// Traduccion entre los enums del dominio y los literales que ya viven en la base
-/// provista por el challenge. Se mantienen exactamente esos literales para no romper
-/// los datos existentes ni las expectativas del evaluador.
+/// Traduccion entre los enums del dominio y los literales que ya viven en la base provista
+/// por el challenge.
 /// </summary>
 public static class DbValues
 {
@@ -52,7 +51,24 @@ public static class DbValues
         _ => throw new ArgumentOutOfRangeException(nameof(value), value, "Type desconocido.")
     };
 
-    public static OrderStatus ToOrderStatus(string value) => value switch
+    /// <summary>
+    /// Traduce un literal leido de la base. Si el valor no existe lanza
+    /// <see cref="ArgumentOutOfRangeException"/>: quiere decir que en la columna hay algo que el
+    /// dominio no modela, y eso es un fallo, no un caso de negocio. Para el texto que manda el
+    /// usuario esta ToOrderStatusOrNull.
+    /// </summary>
+    public static OrderStatus ToOrderStatus(string value) => ToOrderStatusOrNull(value)
+        ?? throw new ArgumentOutOfRangeException(nameof(value), value, "Status desconocido.");
+
+    /// <summary>
+    /// Traduce un literal que puede no existir, sin lanzar nada: es la puerta de entrada del
+    /// texto que viene de afuera, donde un status invalido es un error del cliente.
+    ///
+    /// Devuelve null en vez de seguir el patrón Try con un out porque el default de OrderStatus
+    /// es New: quien ignorara el bool se quedaria filtrando por NEW ante un literal invalido,
+    /// justo el error que este tipo evita. Sin out param no se puede escribir.
+    /// </summary>
+    public static OrderStatus? ToOrderStatusOrNull(string value) => value switch
     {
         "NEW" => OrderStatus.New,
         "PARTIALLY_FILLED" => OrderStatus.PartiallyFilled,
@@ -60,12 +76,13 @@ public static class DbValues
         "REJECTED" => OrderStatus.Rejected,
         "CANCELLED" => OrderStatus.Cancelled,
         "EXPIRED" => OrderStatus.Expired,
-        _ => throw new ArgumentOutOfRangeException(nameof(value), value, "Status desconocido.")
+        _ => null
     };
 
     /// <summary>Estados en los que una orden sigue viva y por lo tanto sigue reservando.</summary>
     public static readonly string[] OpenStatuses = ["NEW", "PARTIALLY_FILLED"];
 
-    /// <summary>Estados en los que una orden ya movio cash o tenencia reales.</summary>
-    public static readonly string[] ExecutedStatuses = ["FILLED", "PARTIALLY_FILLED"];
+    // No hay lista de estados "ejecutados" y es a propósito: lo ejecutado es filledsize, no un
+    // conjunto de estados. Una orden cancelada o vencida a medio ejecutar conserva lo que si se
+    // ejecuto, y filtrar por estado le borraria al usuario las acciones que efectivamente compro.
 }

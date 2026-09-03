@@ -13,5 +13,6 @@ public sealed class Instrument
     /// <summary>ACCIONES, MONEDA, etc. El cash (ARS) esta modelado como instrumento MONEDA.</summary>
     public string Type { get; private set; } = null!;
 
+    /// <summary>El cash no es una posicion: se informa como disponible, no en la cartera.</summary>
     public bool IsCurrency => Type == CurrencyType;
 }

@@ -4,7 +4,10 @@ using Microsoft.AspNetCore.Mvc;
 namespace Cocos.Api.Infrastructure;
 
 /// <summary>
-/// Manejo global de errores. Nada de try/catch disperso por los handlers.
+/// Manejo global de errores, para no tener try/catch repartido por los handlers.
+///
+/// Solo llegan aca los fallos inesperados: el flujo de negocio viaja por Result y lo traduce
+/// ResultExtensions.ToProblem.
 /// </summary>
 internal sealed class GlobalExceptionHandler(
     ILogger<GlobalExceptionHandler> logger,
@@ -15,10 +18,9 @@ internal sealed class GlobalExceptionHandler(
         Exception exception,
         CancellationToken cancellationToken)
     {
-        // La cancelacion se trata de forma EXPLICITA y separada del resto.
-        // Regla del proyecto: no tragarse OperationCanceledException como si fuera
-        // una excepcion generica. Que el cliente corte la conexion no es un error 500
-        // del servidor, y loguearlo como tal ensucia la senal de errores reales.
+        // La cancelación se trata aparte y no como una excepcion génerica: que el cliente corte
+        // la conexión no es un error 500 del servidor, y loguearlo como tal ensucia la senal de
+        // los errores de verdad.
         if (exception is OperationCanceledException && httpContext.RequestAborted.IsCancellationRequested)
         {
             logger.LogInformation(
@@ -26,7 +28,7 @@ internal sealed class GlobalExceptionHandler(
                 httpContext.Request.Method,
                 httpContext.Request.Path);
 
-            // 499 Client Closed Request. No escribimos body: el cliente ya no esta.
+            // 499 Client Closed Request. Sin body: el cliente ya no esta del otro lado.
             httpContext.Response.StatusCode = 499;
             return true;
         }

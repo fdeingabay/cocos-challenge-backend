@@ -4,7 +4,7 @@ using FluentAssertions;
 namespace Cocos.ArchitectureTests;
 
 /// <summary>
-/// Esta regla se verifica sobre el codigo fuente y no por reflection a proposito:
+/// Esta regla se verifica sobre el código fuente y no por reflection a propósito:
 /// DateTime.Now se compila a una llamada estatica que no deja rastro en la superficie
 /// de tipos, asi que ningun analisis de dependencias entre ensamblados puede detectarla.
 /// </summary>
@@ -17,7 +17,7 @@ public partial class ClockUsageTests
     public void Ningun_archivo_de_produccion_lee_el_reloj_directamente()
     {
         var sourceRoot = Path.Combine(FindSolutionRoot(), "src");
-        Directory.Exists(sourceRoot).Should().BeTrue("el test necesita encontrar el codigo fuente");
+        Directory.Exists(sourceRoot).Should().BeTrue("el test necesita encontrar el código fuente");
 
         var offenders = Directory
             .EnumerateFiles(sourceRoot, "*.cs", SearchOption.AllDirectories)
@@ -31,7 +31,7 @@ public partial class ClockUsageTests
 
         offenders.Should().BeEmpty(
             "el tiempo se inyecta con TimeProvider. Leer el reloj ambiente vuelve intesteable "
-            + "todo lo que dependa de el -- empezando por el vencimiento de las ordenes LIMIT");
+            + "todo lo que dependa de el -- empezando por el vencimiento de las órdenes LIMIT");
     }
 
     /// <summary>

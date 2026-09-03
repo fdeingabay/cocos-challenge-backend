@@ -10,10 +10,10 @@ namespace Cocos.Infrastructure.Persistence.Configurations;
 public sealed class OrderConfiguration : IEntityTypeConfiguration<Order>
 {
     /// <summary>
-    /// Postgres pliega a minusculas todo identificador que no venga entre comillas, y el
-    /// DDL provisto los declara sin comillas. Las columnas reales son "instrumentid",
-    /// "previousclose", etc. Por eso cada columna se mapea explicitamente: confiar en la
-    /// convencion PascalCase de EF produce errores de "column does not exist" en runtime.
+    /// Postgres pliega a minúsculas todo identificador que no venga entre comillas, y el DDL
+    /// provisto los declara sin comillas: las columnas reales son "instrumentid",
+    /// "previousclose". Por eso cada una se mapea con HasColumnName explicito; confiar en la
+    /// convención PascalCase de EF falla recién en runtime, con "column does not exist".
     /// </summary>
     public void Configure(EntityTypeBuilder<Order> builder)
     {
@@ -47,15 +47,20 @@ public sealed class OrderConfiguration : IEntityTypeConfiguration<Order>
 
         builder.Property(o => o.DateTime)
             .HasColumnName("datetime")
-            // El tipo va explicito: el default de Npgsql para DateTime es
-            // 'timestamp with time zone', que rechaza un Kind=Unspecified. El esquema
-            // provisto usa TIMESTAMP sin zona, asi que hay que decirlo.
+            // El tipo va explicito: el default de Npgsql para DateTime es 'timestamp with time
+            // zone' y el esquema provisto usa TIMESTAMP sin zona. Sin decirlo, escribir lanza
+            // ArgumentException.
             .HasColumnType("timestamp without time zone")
             .HasConversion(TimestampConverters.Unspecified)
             .IsRequired();
 
         builder.Property(o => o.ExpiresAt)
             .HasColumnName("expiresat")
+            .HasColumnType("timestamp without time zone")
+            .HasConversion(TimestampConverters.NullableUnspecified);
+
+        builder.Property(o => o.CancelledAt)
+            .HasColumnName("cancelledat")
             .HasColumnType("timestamp without time zone")
             .HasConversion(TimestampConverters.NullableUnspecified);
 
@@ -66,9 +71,9 @@ public sealed class OrderConfiguration : IEntityTypeConfiguration<Order>
 }
 
 /// <summary>
-/// Las columnas de tiempo del esquema provisto son TIMESTAMP sin timezone. Npgsql rechaza
-/// un DateTime con Kind=Utc contra ese tipo. La convencion del proyecto es guardar UTC,
-/// asi que se traduce el Kind en el borde: Unspecified al escribir, Utc al leer.
+/// Las columnas de tiempo del esquema provisto son TIMESTAMP sin zona y Npgsql rechaza un
+/// DateTime con Kind=Utc contra ese tipo. Como la convencion del proyecto es guardar UTC, el
+/// Kind se traduce en el borde: Unspecified al escribir, Utc al leer.
 /// </summary>
 internal static class TimestampConverters
 {
@@ -79,4 +84,12 @@ internal static class TimestampConverters
     public static readonly ValueConverter<DateTime?, DateTime?> NullableUnspecified = new(
         toDb => toDb.HasValue ? DateTime.SpecifyKind(toDb.Value, DateTimeKind.Unspecified) : null,
         fromDb => fromDb.HasValue ? DateTime.SpecifyKind(fromDb.Value, DateTimeKind.Utc) : null);
+
+    /// <summary>
+    /// La misma traduccion para el SQL escrito a mano, porque Dapper no pasa por los converters
+    /// de EF. Sin esto Npgsql infiere timestamptz por el Kind=Utc y Postgres reinterpreta el
+    /// valor segun el TimeZone de la SESION al compararlo contra una columna sin zona: correcto
+    /// mientras el server este en UTC, corrido en silencio si no.
+    /// </summary>
+    public static DateTime ToDb(DateTime value) => DateTime.SpecifyKind(value, DateTimeKind.Unspecified);
 }

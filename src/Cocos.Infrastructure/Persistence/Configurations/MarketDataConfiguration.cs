@@ -20,6 +20,8 @@ public sealed class MarketDataConfiguration : IEntityTypeConfiguration<MarketDat
         builder.Property(m => m.PreviousClose).HasColumnName("previousclose").HasColumnType("numeric(10,2)");
         builder.Property(m => m.Date).HasColumnName("date");
 
+        // Descendente por fecha: toda consulta de precio pide el último close, o sea el primer
+        // renglon de este indice. Asi lo resuelve sin ordenar.
         builder.HasIndex(m => new { m.InstrumentId, m.Date })
                .HasDatabaseName("ix_marketdata_instrument_date")
                .IsDescending(false, true);

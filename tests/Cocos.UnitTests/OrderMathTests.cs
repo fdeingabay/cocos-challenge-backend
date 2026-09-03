@@ -32,12 +32,18 @@ public class OrderMathTests
     public void AverageCost_pondera_por_cantidad_no_por_operacion()
     {
         // 10 a $100 y 10 a $200 -> PPP 150, no el promedio simple de los precios.
-        OrderMath.AverageCost(totalBuyCost: 3_000m, totalBuyQuantity: 20).Should().Be(150m);
+        OrderMath.AverageCost(costBasis: 3_000m, quantity: 20).Should().Be(150m);
     }
 
     [Fact]
     public void AverageCost_sin_compras_es_null_no_cero()
         => OrderMath.AverageCost(0m, 0).Should().BeNull();
+
+    [Fact]
+    public void AverageCost_con_la_posicion_cerrada_es_null_y_no_arrastra_costo()
+        // Al cerrar la posicion el costo vuelve a cero: no hay nada contra que medir. Si el
+        // costo quedara arrastrado, la proxima compra informaria un PPP que nadie pago.
+        => OrderMath.AverageCost(costBasis: 0m, quantity: 0).Should().BeNull();
 
     [Fact]
     public void TotalReturnPercent_compara_contra_el_PPP()
@@ -46,6 +52,18 @@ public class OrderMathTests
     [Fact]
     public void TotalReturnPercent_sin_precio_de_mercado_es_null()
         => OrderMath.TotalReturnPercent(close: null, averageCost: 150m).Should().BeNull();
+
+    [Fact]
+    public void TotalReturnPercent_sin_PPP_es_null()
+        // Sin compras ejecutadas no hay contra que medir el rendimiento. Pasa en una posicion
+        // que se armo vendiendo: AverageCost devuelve null y el rendimiento no existe.
+        => OrderMath.TotalReturnPercent(close: 300m, averageCost: null).Should().BeNull();
+
+    [Fact]
+    public void TotalReturnPercent_con_PPP_cero_es_null_y_no_divide_por_cero()
+        // El PPP es el divisor. Un cero aca no es "rendimiento infinito": es que no hay costo
+        // contra el cual comparar, y la respuesta correcta es null y no una excepcion.
+        => OrderMath.TotalReturnPercent(close: 300m, averageCost: 0m).Should().BeNull();
 
     [Fact]
     public void DailyReturnPercent_es_del_instrumento_no_del_usuario()

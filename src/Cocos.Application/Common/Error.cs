@@ -1,9 +1,10 @@
 namespace Cocos.Application.Common;
 
 /// <summary>
-/// Clasificacion del error, usada por la capa Api para elegir el status HTTP.
-/// Deliberadamente NO existe un tipo para "fondos insuficientes": ese no es un error,
-/// es un resultado de negocio valido que produce una orden REJECTED persistida.
+/// Clasificación del error, que la capa Api traduce a status HTTP (400 / 404 / 409).
+///
+/// No hay un tipo para "fondos insuficientes" a propósito: eso no es un error sino un resultado
+/// de negocio válido, y produce unaóorden REJECTED persistida con su 201.
 /// </summary>
 public enum ErrorType
 {
